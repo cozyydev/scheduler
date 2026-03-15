@@ -1,0 +1,12 @@
+# Database
+*.db
+
+# Go
+*.exe
+*.test
+*.out
+
+# Frontend
+frontend/node_modules
+frontend/dist
+scheduler.db
