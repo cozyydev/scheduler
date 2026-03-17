@@ -46,6 +46,7 @@ interface EmployeeShift {
 interface Employee {
   id: number
   name: string
+  constraints: string
   email: string
   phone: string
   schedule: EmployeeShift[]
@@ -141,9 +142,9 @@ function App() {
       </header>
 
       <main className="container mx-auto px-4 py-8">
-        <Tabs defaultValue="business" orientation="horizontal">
+        <Tabs defaultValue="business">
           <div className="w-full flex-col">
-            <TabsList className="mb-6 w-full justify-start">
+            <TabsList>
               <TabsTrigger value="business">Business Hours</TabsTrigger>
               <TabsTrigger value="employees">Employees</TabsTrigger>
               <TabsTrigger value="schedule">Weekly Schedule</TabsTrigger>
@@ -338,7 +339,8 @@ function EmployeeCard({ employee, onEdit, onDelete }: {
       <CardHeader className="pb-2">
         <div className="flex justify-between items-start">
           <div>
-            <CardTitle>{employee.name}</CardTitle>
+            <CardTitle className="font-bold">{employee.name}</CardTitle>
+            {employee.constraints && <p className="ml-2 text-sm text-muted-foreground">{employee.constraints}</p>}
             {employee.email && <p className="text-sm text-muted-foreground">{employee.email}</p>}
             {employee.phone && <p className="text-sm text-muted-foreground">{employee.phone}</p>}
           </div>
@@ -388,6 +390,7 @@ function EmployeeModalForm({ employee, onClose, onSave }: {
   onSave: () => void
 }) {
   const [name, setName] = useState(employee?.name || '')
+  const [constraints, setConstraints] = useState(employee?.constraints || '')
   const [email, setEmail] = useState(employee?.email || '')
   const [phone, setPhone] = useState(employee?.phone || '')
   const [schedule, setSchedule] = useState<EmployeeShift[]>(() => {
@@ -411,7 +414,7 @@ function EmployeeModalForm({ employee, onClose, onSave }: {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    const payload = { name, email, phone, schedule }
+    const payload = { name, constraints, email, phone, schedule }
 
     const url = employee ? `${API_BASE}/employees/${employee.id}` : `${API_BASE}/employees`
     const method = employee ? 'PUT' : 'POST'
@@ -446,6 +449,15 @@ function EmployeeModalForm({ employee, onClose, onSave }: {
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="constraints">Constraints</Label>
+          <Input
+            id="constraints"
+            type="text"
+            value={constraints}
+            onChange={(e) => setConstraints(e.target.value)}
           />
         </div>
         <div className="grid gap-2">

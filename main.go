@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -176,13 +177,14 @@ type BusinessHours struct {
 }
 
 type Employee struct {
-	ID        int64           `json:"id"`
-	Name      string          `json:"name"`
-	Email     string          `json:"email"`
-	Phone     string          `json:"phone"`
-	Schedule  []EmployeeShift `json:"schedule"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	ID          int64           `json:"id"`
+	Name        string          `json:"name"`
+	Constraints string          `json:"constraints"`
+	Email       string          `json:"email"`
+	Phone       string          `json:"phone"`
+	Schedule    []EmployeeShift `json:"schedule"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
 }
 
 type EmployeeShift struct {
@@ -217,12 +219,13 @@ func initDB() error {
 		CREATE TABLE IF NOT EXISTS employees (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
+			constraints TEXT,
 			email TEXT,
 			phone TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
-
+		
 		CREATE TABLE IF NOT EXISTS employee_shifts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			employee_id INTEGER NOT NULL,
@@ -233,7 +236,15 @@ func initDB() error {
 			FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec("ALTER TABLE employees ADD COLUMN constraints TEXT")
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return err
+	}
+	return nil
 }
 
 func getBusinessHours() ([]BusinessHours, error) {
@@ -295,7 +306,7 @@ func updateBusinessHours(hours []BusinessHours) error {
 }
 
 func getEmployees() ([]Employee, error) {
-	rows, err := db.Query("SELECT id, name, email, phone, created_at, updated_at FROM employees ORDER BY name")
+	rows, err := db.Query("SELECT id, name, constraints, email, phone, created_at, updated_at FROM employees ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -304,10 +315,12 @@ func getEmployees() ([]Employee, error) {
 	var employees []Employee
 	for rows.Next() {
 		var e Employee
-		err := rows.Scan(&e.ID, &e.Name, &e.Email, &e.Phone, &e.CreatedAt, &e.UpdatedAt)
+		var constraints sql.NullString
+		err := rows.Scan(&e.ID, &e.Name, &constraints, &e.Email, &e.Phone, &e.CreatedAt, &e.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
+		e.Constraints = constraints.String
 
 		shiftRows, err := db.Query(`
 			SELECT id, employee_id, day, start_time, end_time, is_off 
@@ -342,9 +355,9 @@ func getEmployees() ([]Employee, error) {
 
 func createEmployee(e *Employee) error {
 	result, err := db.Exec(`
-		INSERT INTO employees (name, email, phone)
-		VALUES (?, ?, ?)
-	`, e.Name, e.Email, e.Phone)
+		INSERT INTO employees (name, constraints, email, phone)
+		VALUES (?, ?, ?, ?)
+	`, e.Name, e.Constraints, e.Email, e.Phone)
 	if err != nil {
 		return err
 	}
@@ -371,9 +384,9 @@ func createEmployee(e *Employee) error {
 func updateEmployee(e *Employee) error {
 	_, err := db.Exec(`
 		UPDATE employees 
-		SET name = ?, email = ?, phone = ?, updated_at = CURRENT_TIMESTAMP
+		SET name = ?, constraints = ?, email = ?, phone = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, e.Name, e.Email, e.Phone, e.ID)
+	`, e.Name, e.Constraints, e.Email, e.Phone, e.ID)
 	if err != nil {
 		return err
 	}
