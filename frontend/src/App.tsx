@@ -15,8 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 
-const API_BASE = 'http://localhost:8080/api'
-
+const API_BASE = import.meta.env.VITE_API_BASE
 const to12Hour = (time: string) => {
   if (!time) return ''
   const [hours, minutes] = time.split(':')
