@@ -42,13 +42,40 @@ interface EmployeeShift {
   isOff: boolean
 }
 
+interface EmployeeAvailability {
+  id: number
+  employeeId: number
+  day: number
+  isAvailable: boolean
+  startTime: string
+  endTime: string
+}
+
 interface Employee {
   id: number
   name: string
   constraints: string
   email: string
   phone: string
+  isFullTime: boolean
+  maxDaysPerWeek: number
   schedule: EmployeeShift[]
+  availability: EmployeeAvailability[]
+}
+
+interface ShiftAssignment {
+  employeeId: number
+  employeeName: string
+  day: number
+  startTime: string
+  endTime: string
+  shiftType: string
+}
+
+interface OptimizeResponse {
+  schedule: ShiftAssignment[]
+  totalHours: Record<number, number>
+  warnings: string[]
 }
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -92,6 +119,10 @@ function App() {
   const [showEmployeeModal, setShowEmployeeModal] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [openCount, setOpenCount] = useState(2)
+  const [closeCount, setCloseCount] = useState(1)
+  const [optimizedSchedule, setOptimizedSchedule] = useState<OptimizeResponse | null>(null)
+  const [isOptimizing, setIsOptimizing] = useState(false)
 
   useEffect(() => {
     fetchBusinessHours()
@@ -125,6 +156,23 @@ function App() {
     ))
   }
 
+  const generateOptimizedSchedule = async () => {
+    setIsOptimizing(true)
+    try {
+      const res = await fetch(`${API_BASE}/optimize-schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ openCount, closeCount }),
+      })
+      const data = await res.json()
+      setOptimizedSchedule(data)
+    } catch (err) {
+      alert('Error generating schedule')
+    } finally {
+      setIsOptimizing(false)
+    }
+  }
+
   const filteredEmployees = employees.filter(emp =>
     emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     emp.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -143,10 +191,11 @@ function App() {
       <main className="container mx-auto px-4 py-8">
         <Tabs defaultValue="business">
           <div className="w-full flex-col">
-            <TabsList>
+            <TabsList className="mb-2">
               <TabsTrigger value="business">Business Hours</TabsTrigger>
               <TabsTrigger value="employees">Employees</TabsTrigger>
               <TabsTrigger value="schedule">Weekly Schedule</TabsTrigger>
+              <TabsTrigger value="optimized">Optimized Schedule</TabsTrigger>
             </TabsList>
 
             <TabsContent value="business">
@@ -303,11 +352,111 @@ function App() {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            <TabsContent value="optimized">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Optimized Schedule</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="flex items-center gap-4 p-4 rounded-lg border">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="openCount">Openers per day:</Label>
+                      <Input
+                        id="openCount"
+                        type="number"
+                        min={1}
+                        value={openCount}
+                        onChange={(e) => setOpenCount(parseInt(e.target.value) || 1)}
+                        className="w-20"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="closeCount">Closers per day:</Label>
+                      <Input
+                        id="closeCount"
+                        type="number"
+                        min={1}
+                        value={closeCount}
+                        onChange={(e) => setCloseCount(parseInt(e.target.value) || 1)}
+                        className="w-20"
+                      />
+                    </div>
+                    <Button onClick={generateOptimizedSchedule} disabled={isOptimizing}>
+                      {isOptimizing ? 'Generating...' : 'Generate Optimized Schedule'}
+                    </Button>
+                  </div>
+
+                  {optimizedSchedule && (
+                    <>
+                      {optimizedSchedule.warnings.length > 0 && (
+                        <div className="p-4 rounded-lg border border-amber-500 bg-amber-50 dark:bg-amber-950">
+                          <h4 className="font-medium text-amber-800 dark:text-amber-200 mb-2">Warnings</h4>
+                          <ul className="list-disc list-inside text-sm text-amber-700 dark:text-amber-300">
+                            {optimizedSchedule.warnings.map((warning, idx) => (
+                              <li key={idx}>{warning}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead></TableHead>
+                            {SCHEDULE_DAYS.map(day => (
+                              <TableHead key={day} className="text-center">{day}</TableHead>
+                            ))}
+                            <TableHead className="text-center">Total</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {employees.map(emp => {
+                            const empShifts = optimizedSchedule.schedule.filter(s => s.employeeId === emp.id)
+                            const totalHours = optimizedSchedule.totalHours[emp.id] || 0
+                            return (
+                              <TableRow key={emp.id}>
+                                <TableCell className="font-medium">{emp.name}</TableCell>
+                                {SCHEDULE_DAYS.map((_, colIdx) => {
+                                  const shift = empShifts.find(s => s.day === colIdx)
+                                  return (
+                                    <TableCell key={colIdx} className="p-1">
+                                      {shift ? (
+                                        <div className={`text-center text-xs px-1 py-1 rounded ${shift.shiftType === 'open' ? 'bg-green-500/20' :
+                                          shift.shiftType === 'close' ? 'bg-red-500/20' :
+                                            'bg-primary text-primary-foreground'
+                                          }`}>
+                                          <div>{to12Hour(shift.startTime)} - {to12Hour(shift.endTime)}</div>
+                                          <div className="text-[10px] uppercase">{shift.shiftType}</div>
+                                        </div>
+                                      ) : (
+                                        <div className="text-center text-muted-foreground text-sm">Off</div>
+                                      )}
+                                    </TableCell>
+                                  )
+                                })}
+                                <TableCell className="text-center">{totalHours.toFixed(1)}h</TableCell>
+                              </TableRow>
+                            )
+                          })}
+                        </TableBody>
+                      </Table>
+                    </>
+                  )}
+
+                  {!optimizedSchedule && (
+                    <p className="text-center text-muted-foreground py-8">
+                      Configure the number of openers and closers needed, then click "Generate Optimized Schedule"
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
           </div>
         </Tabs>
 
         <Dialog open={showEmployeeModal} onOpenChange={setShowEmployeeModal}>
-          <DialogContent className="min-w-3xl max-h-(calc(100vh-50rem)) overflow-y-auto">
+          <DialogContent className="min-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingEmployee ? 'Edit Employee' : 'Add Employee'}</DialogTitle>
             </DialogHeader>
@@ -392,8 +541,18 @@ function EmployeeModalForm({ employee, onClose, onSave }: {
   const [constraints, setConstraints] = useState(employee?.constraints || '')
   const [email, setEmail] = useState(employee?.email || '')
   const [phone, setPhone] = useState(employee?.phone || '')
+  const [isFullTime, setIsFullTime] = useState(employee?.isFullTime || false)
+  const [maxDaysPerWeek, setMaxDaysPerWeek] = useState(employee?.maxDaysPerWeek || 5)
   const [schedule, setSchedule] = useState<EmployeeShift[]>(() => {
-    if (employee?.schedule) return employee.schedule
+    if (employee?.schedule) {
+      const uniqueByDay = employee.schedule.reduce((acc: EmployeeShift[], shift) => {
+        if (!acc.find(s => s.day === shift.day)) {
+          acc.push(shift)
+        }
+        return acc
+      }, [])
+      return uniqueByDay
+    }
     return SCHEDULE_DAYS.map((_, day) => ({
       id: 0,
       employeeId: employee?.id || 0,
@@ -403,6 +562,25 @@ function EmployeeModalForm({ employee, onClose, onSave }: {
       isOff: day === 6,
     }))
   })
+  const [availability, setAvailability] = useState<EmployeeAvailability[]>(() => {
+    if (employee?.availability && employee.availability.length > 0) {
+      const uniqueByDay = employee.availability.reduce((acc: EmployeeAvailability[], avail) => {
+        if (!acc.find(a => a.day === avail.day)) {
+          acc.push(avail)
+        }
+        return acc
+      }, [])
+      return uniqueByDay
+    }
+    return SCHEDULE_DAYS.map((_, day) => ({
+      id: 0,
+      employeeId: employee?.id || 0,
+      day,
+      isAvailable: day !== 6,
+      startTime: '09:00',
+      endTime: '17:00',
+    }))
+  })
 
   const updateShift = (day: number, field: keyof EmployeeShift, value: string | boolean) => {
     setSchedule(prev => prev.map(s =>
@@ -410,10 +588,16 @@ function EmployeeModalForm({ employee, onClose, onSave }: {
     ))
   }
 
+  const updateAvailability = (day: number, field: keyof EmployeeAvailability, value: string | boolean) => {
+    setAvailability(prev => prev.map(a =>
+      a.day === day ? { ...a, [field]: value } : a
+    ))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    const payload = { name, constraints, email, phone, schedule }
+    const payload = { name, constraints, email, phone, isFullTime, maxDaysPerWeek, schedule, availability }
 
     const url = employee ? `${API_BASE}/employees/${employee.id}` : `${API_BASE}/employees`
     const method = employee ? 'PUT' : 'POST'
@@ -477,6 +661,61 @@ function EmployeeModalForm({ employee, onClose, onSave }: {
             onChange={(e) => setPhone(e.target.value)}
           />
         </div>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="isFullTime"
+            checked={isFullTime}
+            onCheckedChange={(checked) => setIsFullTime(checked as boolean)}
+          />
+          <Label htmlFor="isFullTime">Full Time Employee (40 hours/week target)</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="maxDaysPerWeek">Max days per week:</Label>
+          <Input
+            id="maxDaysPerWeek"
+            type="number"
+            min={1}
+            max={7}
+            value={maxDaysPerWeek}
+            onChange={(e) => setMaxDaysPerWeek(parseInt(e.target.value) || 5)}
+            className="w-20"
+          />
+        </div>
+      </div>
+
+      <h3 className="font-medium mb-3">Weekly Availability</h3>
+      <p className="text-sm text-muted-foreground mb-3">Select which days and times this employee is available to work</p>
+      <div className="space-y-3 mb-6">
+        {availability.map((avail) => (
+          <div key={avail.day} className="flex items-center gap-4 p-3 rounded-lg border">
+            <span className="w-24 font-medium">{DAYS[avail.day]}</span>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id={`avail-${avail.day}`}
+                checked={avail.isAvailable}
+                onCheckedChange={(checked) => updateAvailability(avail.day, 'isAvailable', checked as boolean)}
+              />
+              <Label htmlFor={`avail-${avail.day}`} className="text-sm">Available</Label>
+            </div>
+            {avail.isAvailable && (
+              <>
+                <Input
+                  type="time"
+                  value={avail.startTime}
+                  onChange={(e) => updateAvailability(avail.day, 'startTime', e.target.value)}
+                  className="w-auto"
+                />
+                <span className="text-xs text-muted-foreground">to</span>
+                <Input
+                  type="time"
+                  value={avail.endTime}
+                  onChange={(e) => updateAvailability(avail.day, 'endTime', e.target.value)}
+                  className="w-auto"
+                />
+              </>
+            )}
+          </div>
+        ))}
       </div>
 
       <h3 className="font-medium mb-3">Weekly Schedule</h3>
