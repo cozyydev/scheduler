@@ -607,13 +607,8 @@ func optimizeSchedule(employees []Employee, businessHours map[int]BusinessHours,
 
 	empAssignedDays := make(map[int64]int)
 	empTotalHours := make(map[int64]float64)
-	empSplitShifts := make(map[int64]int)
+	empPrevDayHours := make(map[int64]float64)
 	empShifts := make(map[int64][]ShiftAssignment)
-
-	openShiftEnd := "18:00"
-	midShiftStart := "12:00"
-	midShiftEnd := "21:00"
-	closeShiftStart := "13:00"
 
 	fullTimeEmps := make(map[int64]bool)
 	for _, emp := range employees {
@@ -628,121 +623,154 @@ func optimizeSchedule(employees []Employee, businessHours map[int]BusinessHours,
 			continue
 		}
 
-		openTime := bh.OpenTime
-		closeTime := bh.CloseTime
-
-		available := getAvailableEmployeesForDay(employees, day, empAssignedDays)
-		noSplitEmps := getNoSplitEmployees(employees)
-
-		assignedToday := make(map[int64]bool)
-
 		openersNeeded := openCount
 		closersNeeded := closeCount
 
-		openCandidates := filterByStartTime(available, openTime, openShiftEnd)
-		closeCandidates := filterByEndTime(available, closeShiftStart, closeTime)
+		available := getAvailableEmployeesForDay(employees, day, empAssignedDays)
+
+		FIXED_OPEN_START := "09:00"
+		FIXED_OPEN_END := "18:00"
+		FIXED_MID_START := "12:00"
+		FIXED_MID_END := "21:00"
+		FIXED_CLOSE_START := "13:00"
+		FIXED_CLOSE_END := "22:00"
+
+		type candidate struct {
+			emp       Employee
+			startTime string
+			endTime   string
+			hours     float64
+		}
+
+		var openCandidates []candidate
+		var closeCandidates []candidate
+		var midCandidates []candidate
+
+		openStartMin := parseTimeToMinutes(FIXED_OPEN_START)
+		openEndMin := parseTimeToMinutes(FIXED_OPEN_END)
+		midStartMin := parseTimeToMinutes(FIXED_MID_START)
+		midEndMin := parseTimeToMinutes(FIXED_MID_END)
+		closeStartMin := parseTimeToMinutes(FIXED_CLOSE_START)
+		closeEndMin := parseTimeToMinutes(FIXED_CLOSE_END)
+
+		for _, emp := range available {
+			isAvail, availStart, availEnd := getEmployeeAvailabilityForDay(emp, day)
+			if !isAvail || availStart == "" || availEnd == "" {
+				continue
+			}
+
+			availStartMinutes := parseTimeToMinutes(availStart)
+			availEndMinutes := parseTimeToMinutes(availEnd)
+
+			prevHours := empPrevDayHours[emp.ID]
+			maxHours := 8.0
+			if prevHours >= 10 {
+				maxHours = 4.0
+			} else if prevHours >= 8 {
+				maxHours = 6.0
+			}
+
+			if availStartMinutes <= openStartMin && availEndMinutes >= openEndMin {
+				h := 8.0
+				if h > maxHours {
+					h = maxHours
+				}
+				openCandidates = append(openCandidates, candidate{emp, FIXED_OPEN_START, FIXED_OPEN_END, h})
+			}
+
+			if availStartMinutes <= closeStartMin && availEndMinutes >= closeEndMin {
+				h := 8.0
+				if h > maxHours {
+					h = maxHours
+				}
+				closeCandidates = append(closeCandidates, candidate{emp, FIXED_CLOSE_START, FIXED_CLOSE_END, h})
+			}
+
+			if availStartMinutes <= midStartMin && availEndMinutes >= midEndMin {
+				h := 8.0
+				if h > maxHours {
+					h = maxHours
+				}
+				midCandidates = append(midCandidates, candidate{emp, FIXED_MID_START, FIXED_MID_END, h})
+			}
+		}
+
+		assignedToday := make(map[int64]bool)
 
 		for openersNeeded > 0 && len(openCandidates) > 0 {
-			emp := openCandidates[0]
-			if !assignedToday[emp.ID] || !noSplitEmps[emp.ID] {
-				schedule = append(schedule, ShiftAssignment{
-					EmployeeID:   emp.ID,
-					EmployeeName: emp.Name,
-					Day:          day,
-					StartTime:    openTime,
-					EndTime:      openShiftEnd,
-					ShiftType:    "open",
-				})
-				empAssignedDays[emp.ID]++
-				empTotalHours[emp.ID] += getWorkingHours(openTime, openShiftEnd)
-				empShifts[emp.ID] = append(empShifts[emp.ID], ShiftAssignment{Day: day, ShiftType: "open"})
-				openersNeeded--
-				assignedToday[emp.ID] = true
+			best := -1
+			for i, c := range openCandidates {
+				if best == -1 || c.hours > openCandidates[best].hours {
+					best = i
+				}
 			}
-			openCandidates = openCandidates[1:]
+			if best == -1 || assignedToday[openCandidates[best].emp.ID] {
+				break
+			}
+			c := openCandidates[best]
+			schedule = append(schedule, ShiftAssignment{
+				EmployeeID:   c.emp.ID,
+				EmployeeName: c.emp.Name,
+				Day:          day,
+				StartTime:    c.startTime,
+				EndTime:      c.endTime,
+				ShiftType:    "open",
+			})
+			empAssignedDays[c.emp.ID]++
+			empTotalHours[c.emp.ID] += c.hours
+			empPrevDayHours[c.emp.ID] = c.hours
+			empShifts[c.emp.ID] = append(empShifts[c.emp.ID], ShiftAssignment{Day: day, ShiftType: "open"})
+			openersNeeded--
+			assignedToday[c.emp.ID] = true
+			openCandidates = append(openCandidates[:best], openCandidates[best+1:]...)
 		}
 
 		for closersNeeded > 0 && len(closeCandidates) > 0 {
-			emp := closeCandidates[0]
-			if !assignedToday[emp.ID] || !noSplitEmps[emp.ID] {
-				schedule = append(schedule, ShiftAssignment{
-					EmployeeID:   emp.ID,
-					EmployeeName: emp.Name,
-					Day:          day,
-					StartTime:    closeShiftStart,
-					EndTime:      closeTime,
-					ShiftType:    "close",
-				})
-				empAssignedDays[emp.ID]++
-				empTotalHours[emp.ID] += getWorkingHours(closeShiftStart, closeTime)
-				empShifts[emp.ID] = append(empShifts[emp.ID], ShiftAssignment{Day: day, ShiftType: "close"})
-				closersNeeded--
-				assignedToday[emp.ID] = true
-			}
-			closeCandidates = closeCandidates[1:]
-		}
-
-		for openersNeeded > 0 {
-			for _, emp := range available {
-				if !assignedToday[emp.ID] || !noSplitEmps[emp.ID] {
-					schedule = append(schedule, ShiftAssignment{
-						EmployeeID:   emp.ID,
-						EmployeeName: emp.Name,
-						Day:          day,
-						StartTime:    openTime,
-						EndTime:      openShiftEnd,
-						ShiftType:    "open",
-					})
-					empAssignedDays[emp.ID]++
-					empTotalHours[emp.ID] += getWorkingHours(openTime, openShiftEnd)
-					empSplitShifts[emp.ID]++
-					empShifts[emp.ID] = append(empShifts[emp.ID], ShiftAssignment{Day: day, ShiftType: "open"})
-					openersNeeded--
-					assignedToday[emp.ID] = true
-					break
+			best := -1
+			for i, c := range closeCandidates {
+				if assignedToday[c.emp.ID] {
+					continue
+				}
+				if best == -1 || c.hours > closeCandidates[best].hours {
+					best = i
 				}
 			}
-			break
-		}
-
-		for closersNeeded > 0 {
-			for _, emp := range available {
-				if !assignedToday[emp.ID] || !noSplitEmps[emp.ID] {
-					schedule = append(schedule, ShiftAssignment{
-						EmployeeID:   emp.ID,
-						EmployeeName: emp.Name,
-						Day:          day,
-						StartTime:    closeShiftStart,
-						EndTime:      closeTime,
-						ShiftType:    "close",
-					})
-					empAssignedDays[emp.ID]++
-					empTotalHours[emp.ID] += getWorkingHours(closeShiftStart, closeTime)
-					empSplitShifts[emp.ID]++
-					empShifts[emp.ID] = append(empShifts[emp.ID], ShiftAssignment{Day: day, ShiftType: "close"})
-					closersNeeded--
-					assignedToday[emp.ID] = true
-					break
-				}
+			if best == -1 {
+				break
 			}
-			break
+			c := closeCandidates[best]
+			schedule = append(schedule, ShiftAssignment{
+				EmployeeID:   c.emp.ID,
+				EmployeeName: c.emp.Name,
+				Day:          day,
+				StartTime:    c.startTime,
+				EndTime:      c.endTime,
+				ShiftType:    "close",
+			})
+			empAssignedDays[c.emp.ID]++
+			empTotalHours[c.emp.ID] += c.hours
+			empPrevDayHours[c.emp.ID] = c.hours
+			empShifts[c.emp.ID] = append(empShifts[c.emp.ID], ShiftAssignment{Day: day, ShiftType: "close"})
+			closersNeeded--
+			assignedToday[c.emp.ID] = true
+			closeCandidates = append(closeCandidates[:best], closeCandidates[best+1:]...)
 		}
 
-		allAssigned := assignedToday
-		for _, emp := range available {
-			if !allAssigned[emp.ID] && !noSplitEmps[emp.ID] {
+		for _, c := range midCandidates {
+			if !assignedToday[c.emp.ID] {
 				schedule = append(schedule, ShiftAssignment{
-					EmployeeID:   emp.ID,
-					EmployeeName: emp.Name,
+					EmployeeID:   c.emp.ID,
+					EmployeeName: c.emp.Name,
 					Day:          day,
-					StartTime:    midShiftStart,
-					EndTime:      midShiftEnd,
+					StartTime:    c.startTime,
+					EndTime:      c.endTime,
 					ShiftType:    "mid",
 				})
-				empAssignedDays[emp.ID]++
-				empTotalHours[emp.ID] += getWorkingHours(midShiftStart, midShiftEnd)
-				empShifts[emp.ID] = append(empShifts[emp.ID], ShiftAssignment{Day: day, ShiftType: "mid"})
-				allAssigned[emp.ID] = true
+				empAssignedDays[c.emp.ID]++
+				empTotalHours[c.emp.ID] += c.hours
+				empPrevDayHours[c.emp.ID] = c.hours
+				empShifts[c.emp.ID] = append(empShifts[c.emp.ID], ShiftAssignment{Day: day, ShiftType: "mid"})
+				assignedToday[c.emp.ID] = true
 			}
 		}
 
@@ -754,19 +782,27 @@ func optimizeSchedule(employees []Employee, businessHours map[int]BusinessHours,
 		}
 	}
 
-	for empID, days := range empAssignedDays {
-		if days == 0 {
+	empUniqueDays := make(map[int64]map[int]bool)
+	for _, shift := range schedule {
+		if empUniqueDays[shift.EmployeeID] == nil {
+			empUniqueDays[shift.EmployeeID] = make(map[int]bool)
+		}
+		empUniqueDays[shift.EmployeeID][shift.Day] = true
+	}
+
+	for empID := range empAssignedDays {
+		uniqueDays := 0
+		if daysMap, ok := empUniqueDays[empID]; ok {
+			uniqueDays = len(daysMap)
+		}
+		if uniqueDays == 0 {
 			warnings = append(warnings, fmt.Sprintf("%s has no shifts assigned", getEmployeeName(employees, empID)))
-		}
-		if days >= 6 {
-			warnings = append(warnings, fmt.Sprintf("%s works 6+ days - consider giving a day off", getEmployeeName(employees, empID)))
-		}
-		if empSplitShifts[empID] > 0 {
-			warnings = append(warnings, fmt.Sprintf("%s has %d split shift(s)", getEmployeeName(employees, empID), empSplitShifts[empID]))
+		} else if uniqueDays >= 6 {
+			warnings = append(warnings, fmt.Sprintf("%s works %d days - consider giving a day off", getEmployeeName(employees, empID), uniqueDays))
 		}
 		hours := empTotalHours[empID]
 		if fullTimeEmps[empID] && hours < 40 {
-			warnings = append(warnings, fmt.Sprintf("%s is full-time but only has %.1f hours (need 40)", getEmployeeName(employees, empID), hours))
+			warnings = append(warnings, fmt.Sprintf("%s is full-time but only has %.0f hours (need 40)", getEmployeeName(employees, empID), hours))
 		}
 	}
 
@@ -854,6 +890,25 @@ func getNoSplitEmployees(employees []Employee) map[int64]bool {
 		}
 	}
 	return noSplit
+}
+
+func getEmployeeAvailabilityForDay(emp Employee, day int) (bool, string, string) {
+	if len(emp.Availability) > 0 {
+		for _, avail := range emp.Availability {
+			if int(avail.Day) == day && avail.IsAvailable {
+				return true, avail.StartTime, avail.EndTime
+			}
+		}
+		return false, "", ""
+	}
+	if len(emp.Schedule) > 0 {
+		for _, shift := range emp.Schedule {
+			if int(shift.Day) == day && !shift.IsOff && shift.StartTime != "" && shift.EndTime != "" {
+				return true, shift.StartTime, shift.EndTime
+			}
+		}
+	}
+	return false, "", ""
 }
 
 func getAvailableEmployeesForDay(employees []Employee, day int, empAssignedDays map[int64]int) []Employee {
